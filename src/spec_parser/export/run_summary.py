@@ -38,19 +38,36 @@ def write_run_summary(
         elif "INSULATION" in (t or "").upper():
             insulation.append((n or (s.section_number or ""), t))
 
+    # Section range metrics (pages)
+    lengths = [(max(1, (s.end_page - s.start_page + 1))) for s in sections]
+    longest = max(lengths) if lengths else 0
+    shortest = min(lengths) if lengths else 0
+    avg_len = (sum(lengths) / len(lengths)) if lengths else 0
+
+    insulation_related_count = sum(
+        1
+        for s in sections
+        if (s.category or "").upper().find("INSULATION") >= 0
+    )
+
     with open(out_path, "w", encoding="utf-8") as f:
         f.write(f"TIMESTAMP: {datetime.now().isoformat(timespec='seconds')}\n")
         f.write(f"FILE: {pdf_path}\n")
         f.write(f"TOTAL PAGES: {total_pages}\n")
         f.write(f"PAGES WITH EXTRACTED TEXT: {pages_with_text}\n")
         f.write(f"AVERAGE CHARACTERS PER PAGE: {avg_chars:.0f}\n")
+
         f.write("\nSECTION DETECTION\n")
         f.write(f"SECTIONS FOUND: {len(sections)}\n")
+        f.write(f"LONGEST DETECTED SECTION (PAGES): {longest}\n")
+        f.write(f"SHORTEST DETECTED SECTION (PAGES): {shortest}\n")
+        f.write(f"AVERAGE SECTION LENGTH (PAGES): {avg_len:.2f}\n")
+        f.write(f"INSULATION-RELATED SECTIONS (COUNT): {insulation_related_count}\n")
 
         f.write("\nINSULATION SECTIONS DETECTED\n")
         if insulation:
             for n, t in insulation[:50]:
-                f.write(f"- {n} {t}\n".rstrip() + "\n")
+                f.write((f"- {n} {t}").rstrip() + "\n")
         else:
             f.write("- (none detected by lightweight heuristic)\n")
 

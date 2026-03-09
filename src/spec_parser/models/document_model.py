@@ -31,6 +31,10 @@ class Section:
     # Full section text (Phase 1: optional; Phase 2+ may populate)
     text: str = ""
 
+    # Phase 2+ classification / traceability
+    category: Optional[str] = None
+    parse_notes: str = ""
+
     detection_method: Optional[str] = None
     confidence: float = 0.0
 
@@ -58,5 +62,9 @@ class Document:
 
     metadata: dict[str, Any] = field(default_factory=dict)
     analysis_results: dict[str, Any] = field(default_factory=dict)
+
+    # Phase 2+ convenience fields (avoid refactors later)
+    detected_systems: list[str] = field(default_factory=list)
+    keyword_hits: list[Any] = field(default_factory=list)
 
     warnings: list[str] = field(default_factory=list)

@@ -5,9 +5,27 @@ import os
 from spec_parser.models.types import PageText, SourceSection
 
 
+import re
+
+
+def _slugify_title(title: str) -> str:
+    t = title.strip().lower()
+    t = re.sub(r"[^a-z0-9\s_-]", "", t)
+    t = re.sub(r"\s+", "_", t)
+    t = re.sub(r"_+", "_", t)
+    return t[:60].strip("_")
+
+
 def _safe_section_filename(section: SourceSection) -> str:
     n = (section.normalized_section_number or section.section_number or "unknown").strip()
     n = n.replace(" ", "_").replace(".", "_")
+
+    title = (section.section_title or "").strip()
+    if title:
+        slug = _slugify_title(title)
+        if slug:
+            return f"section_{n}_{slug}.txt"
+
     return f"section_{n}.txt"
 
 
