@@ -1,0 +1,15 @@
+# Equipment insulation rule pack (placeholder)
+
+version: 0.1
+scope: equipment
+
+equipment_type_aliases: {}
+material_aliases: {}
+
+insulation_keywords:
+  - "equipment insulation"
+  - "removable blanket"
+  - "insulating jacket"
+
+notes:
+  - "Placeholder only — no extraction logic yet."

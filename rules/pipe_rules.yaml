@@ -1,0 +1,21 @@
+# Pipe insulation rule pack (placeholder)
+# Phase 2+ will load these rules and apply deterministically.
+
+version: 0.1
+scope: pipe
+
+system_aliases: {}
+material_aliases: {}
+
+thickness_patterns:
+  # examples (do not implement extraction yet)
+  - name: inches
+    regex: "(?i)\\b(\\d+(?:\\.\\d+)?|\\d+/\\d+)\\s*(?:in\\.|inch|inches)\\b"
+
+insulation_keywords:
+  - "pipe insulation"
+  - "piping insulation"
+  - "thermal insulation"
+
+notes:
+  - "Placeholder only — no extraction logic yet."

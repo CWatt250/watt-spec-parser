@@ -1,0 +1,10 @@
+artifacts/
+logs/
+output_samples/
+sample_inputs/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.env
+.venv/

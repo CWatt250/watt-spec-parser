@@ -1,0 +1,112 @@
+from __future__ import annotations
+
+import os
+
+from spec_parser.extract.pdf_text import extract_pages
+from spec_parser.normalize.text_norm import normalize_text
+from spec_parser.detect.csi_sections import detect_source_sections
+from spec_parser.detect.section_classifier import classify_sections
+from spec_parser.export.excel import export_source_sections_xlsx
+from spec_parser.export.json_out import export_source_sections_json
+from spec_parser.export.section_text import export_section_text
+from spec_parser.export.run_summary import write_run_summary
+
+
+def _write_text_preview(pages: list, out_path: str, *, normalized: bool) -> None:
+    os.makedirs(os.path.dirname(out_path), exist_ok=True)
+    with open(out_path, "w", encoding="utf-8") as f:
+        for p in pages:
+            f.write(f"\n\n===== PAGE {p.page_num} =====\n")
+            f.write((p.text or "")[:8000])  # cap preview per page
+            f.write("\n")
+
+
+def _compute_warnings(pages: list) -> list[str]:
+    warnings: list[str] = []
+    if not pages:
+        return ["No pages extracted"]
+
+    empty_pages = sum(1 for p in pages if not (p.text or "").strip())
+    if empty_pages / max(1, len(pages)) > 0.5:
+        warnings.append(f"Low text density: {empty_pages}/{len(pages)} pages are empty")
+
+    avg_chars = sum(len(p.text or "") for p in pages) / max(1, len(pages))
+    if avg_chars < 200:
+        warnings.append(f"Abnormally low extraction output: avg {avg_chars:.0f} chars/page")
+
+    return warnings
+
+
+def run_phase1(pdf_path: str, out_dir: str) -> dict[str, str]:
+    """Phase 1 prototype pipeline.
+
+    Input: one PDF
+    Output:
+    - Source Sections.xlsx
+    - source_sections.json
+    - raw_text_preview.txt
+    - normalized_text_preview.txt
+    - warnings.txt
+    """
+    project_file = os.path.basename(pdf_path)
+
+    pages_raw = extract_pages(pdf_path)
+    warnings = _compute_warnings(pages_raw)
+
+    raw_preview = os.path.join(out_dir, "raw_text_preview.txt")
+    _write_text_preview(pages_raw, raw_preview, normalized=False)
+
+    pages_norm = [
+        type(p)(page_num=p.page_num, text=normalize_text(p.text))  # PageText is frozen dataclass
+        for p in pages_raw
+    ]
+
+    norm_preview = os.path.join(out_dir, "normalized_text_preview.txt")
+    _write_text_preview(pages_norm, norm_preview, normalized=True)
+
+    sections = detect_source_sections(project_file=project_file, pages=pages_norm)
+    sections = classify_sections(sections)
+
+    # Warnings based on detection
+    if len(sections) <= 3:
+        warnings.append(f"Extremely low number of detected sections: {len(sections)}")
+
+    # Additional heuristics
+    empty_pages = sum(1 for p in pages_raw if not (p.text or "").strip())
+    if empty_pages >= max(10, int(len(pages_raw) * 0.6)):
+        warnings.append(f"Unusually large number of pages with no text: {empty_pages}/{len(pages_raw)}")
+
+    avg_chars = (sum(len(p.text or "") for p in pages_raw) / max(1, len(pages_raw)))
+    if avg_chars < 200:
+        warnings.append(f"Very low average characters per page (possible scanned PDF): {avg_chars:.0f}")
+
+    warn_path = os.path.join(out_dir, "warnings.txt")
+    with open(warn_path, "w", encoding="utf-8") as f:
+        for w in warnings:
+            f.write(w + "\n")
+
+    # Export main artifacts
+    xlsx_path = export_source_sections_xlsx(sections, out_dir)
+    json_path = export_source_sections_json(sections, out_dir)
+
+    # Export full text for each detected section (debug)
+    section_text_dir = export_section_text(pages=pages_norm, sections=sections, out_dir=out_dir)
+
+    # Export run summary
+    run_summary_path = write_run_summary(
+        pdf_path=pdf_path,
+        pages_raw=pages_raw,
+        sections=sections,
+        warnings=warnings,
+        out_dir=out_dir,
+    )
+
+    return {
+        "xlsx": xlsx_path,
+        "json": json_path,
+        "raw_preview": raw_preview,
+        "normalized_preview": norm_preview,
+        "warnings": warn_path,
+        "section_text_dir": section_text_dir,
+        "run_summary": run_summary_path,
+    }

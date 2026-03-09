@@ -1,0 +1,19 @@
+# Duct insulation rule pack (placeholder)
+
+version: 0.1
+scope: duct
+
+duct_type_aliases: {}
+material_aliases: {}
+
+thickness_or_rvalue_patterns:
+  - name: r_value
+    regex: "(?i)\\bR-?\\s*(\\d+(?:\\.\\d+)?)\\b"
+
+insulation_keywords:
+  - "duct insulation"
+  - "duct liner"
+  - "acoustic liner"
+
+notes:
+  - "Placeholder only — no extraction logic yet."
