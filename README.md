@@ -1,33 +1,20 @@
-# Estimator Toolkit — Spec Parser (Rules-Based)
+# Watt Spec Parser
 
-**Runtime constraint:** no AI dependency at runtime.
+Deterministic local parser for mechanical insulation specs (no AI runtime dependency).
 
-## v0.1 Target (Phase 1)
-Given **one spec PDF**, produce:
-- `Source Sections.xlsx`
-- `source_sections.json`
+## Current status
+Architecture baseline is complete. **Runtime proof (Phase 1) is pending Python install/config on Windows.**
 
-Pipeline:
-1) extract machine-readable text
-2) normalize
-3) detect CSI sections
-4) classify (lightweight for now)
-5) export
+## Planned outputs
+- Source Sections
+- Pipe Insulation
+- Duct Insulation
+- Scope Gap Flags
+- Insulation Summary
 
-## Run (planned)
-```bash
-python -m spec_parser.cli.main --in <spec.pdf> --out <output_dir>
-```
-
-## Output (Phase 1)
-Workbook: **Source Sections.xlsx**
-- Project File
-- Section Number
-- Section Title
-- Category
-- Start Page
-- End Page
-- Relevance Level
-- Parse Notes
-
-Plus JSON with the same records.
+## Current pipeline
+- PDF text extraction
+- Text normalization
+- CSI section detection (conservative)
+- Section classification (conservative)
+- Excel/JSON/debug exports (including section text + run summary)
