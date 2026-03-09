@@ -44,6 +44,9 @@ def write_run_summary(
     shortest = min(lengths) if lengths else 0
     avg_len = (sum(lengths) / len(lengths)) if lengths else 0
 
+    total_categorized = sum(1 for s in sections if (s.category or "").strip())
+    uncategorized = len(sections) - total_categorized
+
     insulation_related_count = sum(
         1
         for s in sections
@@ -62,6 +65,8 @@ def write_run_summary(
         f.write(f"LONGEST DETECTED SECTION (PAGES): {longest}\n")
         f.write(f"SHORTEST DETECTED SECTION (PAGES): {shortest}\n")
         f.write(f"AVERAGE SECTION LENGTH (PAGES): {avg_len:.2f}\n")
+        f.write(f"TOTAL CATEGORIZED SECTIONS: {total_categorized}\n")
+        f.write(f"UNCATEGORIZED SECTIONS (COUNT): {uncategorized}\n")
         f.write(f"INSULATION-RELATED SECTIONS (COUNT): {insulation_related_count}\n")
 
         f.write("\nINSULATION SECTIONS DETECTED\n")
