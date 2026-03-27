@@ -1,5 +1,10 @@
 """Pipe insulation schedule parser.
 
+Normalization is applied automatically via alias_norm:
+  - Service names are canonicalized (e.g. "CHW supply" -> "CHILLED WATER")
+  - Insulation type names are canonicalized (e.g. "Armaflex" -> "ELASTOMERIC")
+
+
 Maps raw table rows from the piping insulation schedule tables to
 structured PipeInsulationRow dicts.
 
@@ -17,6 +22,8 @@ from __future__ import annotations
 
 import re
 import unicodedata
+
+from spec_parser.normalize.alias_norm import normalize_pipe_row
 
 
 # ── helpers ──────────────────────────────────────────────────────────────────
@@ -191,6 +198,6 @@ def parse_pipe_insulation(
         parsed = _parse_pipe_table(raw_rows, ins_type)
         for r in parsed:
             r["PDF_File"] = pdf_file
-        rows_out.extend(parsed)
+            rows_out.append(normalize_pipe_row(r))
 
     return rows_out

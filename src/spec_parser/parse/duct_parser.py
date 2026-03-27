@@ -19,6 +19,8 @@ from __future__ import annotations
 import re
 import unicodedata
 
+from spec_parser.normalize.alias_norm import normalize_duct_row
+
 
 # ── helpers ──────────────────────────────────────────────────────────────────
 
@@ -170,6 +172,6 @@ def parse_duct_insulation(
         parsed = _parse_duct_table(raw_rows, ins_type)
         for r in parsed:
             r["PDF_File"] = pdf_file
-        rows_out.extend(parsed)
+            rows_out.append(normalize_duct_row(r))
 
     return rows_out
