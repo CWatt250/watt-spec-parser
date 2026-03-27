@@ -21,6 +21,8 @@ from __future__ import annotations
 
 import re
 
+from spec_parser.normalize.aliases import normalize_service, normalize_material
+
 # Keywords that signal a duct table (distinguish from pipe tables)
 _DUCT_HEADER_KEYWORDS = {"thickness", "finish", "remarks"}
 _PIPE_KEYWORDS = {"pipe size", "pipe diameter", "pipe sz"}
@@ -175,14 +177,14 @@ def parse_duct_tables(
 
             results.append(
                 {
-                    "System": current_system,
+                    "System": normalize_service(current_system),
                     "Thickness": thickness,
                     "R_Value": r_value,
                     "Finish": finish,
                     "Exposed": "Yes" if _EXPOSED_RE.search(combined) else "",
                     "Concealed": "Yes" if _CONCEALED_RE.search(combined) else "",
                     "Outdoor": "Yes" if _OUTDOOR_RE.search(combined) else "",
-                    "Insulation_Type": material,
+                    "Insulation_Type": normalize_material(material),
                     "Notes": notes,
                     "PDF_File": pdf_file,
                     "Page_Num": page_num,

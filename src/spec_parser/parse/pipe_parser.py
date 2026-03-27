@@ -18,6 +18,8 @@ from __future__ import annotations
 
 import re
 
+from spec_parser.normalize.aliases import normalize_service, normalize_material
+
 # Keywords that signal a table is a pipe insulation table
 _PIPE_HEADER_KEYWORDS = {"pipe size", "pipe sz", "pipe diameter"}
 
@@ -168,10 +170,10 @@ def parse_pipe_tables(
 
             results.append(
                 {
-                    "Service": current_service,
+                    "Service": normalize_service(current_service),
                     "Pipe_Size_Range": size,
                     "Thickness": thickness,
-                    "Insulation_Type": material,
+                    "Insulation_Type": normalize_material(material),
                     "Jacket_Required": jacket,
                     "Notes": notes,
                     "PDF_File": pdf_file,
