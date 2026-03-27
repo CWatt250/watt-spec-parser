@@ -115,7 +115,20 @@ def _run_parse(pdf_path: str, out_dir: str, scope: str, q: queue.Queue) -> None:
         # ── jacket parsing ────────────────────────────────────────────────────
         post("log", "Parsing jacket rules…")
         jacket_rows = parse_jacket_rules_from_pdf(pdf_path, pdf_file=project_file)
-        post("log", f"  → {len(jacket_rows)} jacket rules")
+        post("log", f"  → {len(jacket_rows)} jacket rules (prose scan)")
+        # Also parse CSI outline-style jacket schedules (section 3.14 format)
+        try:
+            from spec_parser.parse.text_fallback_parser import parse_outline_jacket_schedule
+            outline_jacket = parse_outline_jacket_schedule(
+                [p.text for p in pages_norm],
+                pdf_file=project_file,
+            )
+            if outline_jacket:
+                post("log", f"  → {len(outline_jacket)} jacket rows (outline schedule)")
+                jacket_rows.extend(outline_jacket)
+        except Exception as e:
+            post("log", f"  [warn] Jacket outline parse failed: {e}")
+        post("log", f"  → {len(jacket_rows)} jacket rules total")
         for r in jacket_rows:
             post("jacket_row", r)
 

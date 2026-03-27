@@ -1,6 +1,6 @@
 """Text-based fallback parser for insulation specs without ruled tables.
 
-Handles the two common plain-text insulation schedule formats found in specs
+Handles three common plain-text insulation schedule formats found in specs
 that pdfplumber cannot extract as tables (no visible ruling lines):
 
 Format A — CSI numbered-list (Microsoft/PHX73/PHX83 pattern):
@@ -18,6 +18,18 @@ Format B — Paragraph thickness table (UO2 pattern):
             2)  Sizes 1-1/2" and larger:  1-1/2"
         b.  Cold, 40F to 60F:
             1)  Sizes smaller than 1-1/2":  1/2"
+
+Format C — CSI outline lettered-schedule (PHX73/MasterSpec HVAC pattern):
+    3.13  PIPING INSULATION SCHEDULE, GENERAL
+    D.  INDOOR PIPING INSULATION SCHEDULE
+        1.  Non-Potable Water, Chilled Water, Condenser Water...:
+            a.  Cellular Glass:  1-1/2 inches thick.
+            b.  Mineral-Fiber, Preformed Pipe Insulation, Type I:  1-1/2 inch thick.
+        2.  Refrigerant Piping:
+            a.  Flexible Elastomeric:  1 inches thick.
+    E.  OUTDOOR, ABOVEGROUND PIPING INSULATION SCHEDULE
+        1.  Non-Potable Water, Chilled Water...:
+            a.  Cellular Glass:  2 inches thick.
 """
 
 from __future__ import annotations
@@ -125,8 +137,9 @@ _SIZE_LINE_RE = re.compile(
 )
 
 # "a.  Mineral-Fiber ...:  1 inch thick."  or  "a.  Flexible Elastomeric:  1/2 inch thick."
+# Accepts both colon and semicolon as separator (some specs use semicolons)
 _THICK_A_RE = re.compile(
-    r"^[a-z]\.\s{1,4}(?P<type>.+?):\s+"
+    r"^[a-z]\.\s{1,4}(?P<type>.+?)[;:]\s+"
     r"(?P<thick>[\d\-/½¾¼⅜⅝⅞]+)\s+inch(?:es?)?\s+thick",
     re.IGNORECASE,
 )
@@ -153,6 +166,40 @@ _SIZE_THICK_B_RE = re.compile(
     re.IGNORECASE,
 )
 
+# ── format-C (PHX73-style lettered schedule headers) ──────────────────────────
+
+# "D.  INDOOR PIPING INSULATION SCHEDULE"
+# "E.  OUTDOOR, ABOVEGROUND PIPING INSULATION SCHEDULE"
+# "F.  OUTDOOR, UNDERGROUND PIPING INSULATION SCHEDULE"
+_SCHED_C_HEADER_RE = re.compile(
+    r"^[A-Z]\.\s{1,4}"
+    r"(?P<loc>(?:INDOOR|OUTDOOR(?:[,\s]+\w+)?|EXPOSED))"
+    r"[^:]*PIPING INSULATION SCHEDULE",
+    re.IGNORECASE,
+)
+
+# End of section: "3.14" alone or "3.14  TITLE"
+_NEXT_SECTION_C_RE = re.compile(
+    r"^\s*\d+\.\d+(?:\s+[A-Z]|\s*$)",
+)
+
+# ── jacket outline schedule patterns ──────────────────────────────────────────
+
+_JACKET_SCHED_HDR_RE = re.compile(r"FIELD[-\s]APPLIED JACKET SCHEDULE\b", re.IGNORECASE)
+
+# "A.  Indoor, Field-Applied Jacket Schedule"
+_JACKET_LOC_RE = re.compile(
+    r"^[A-Z]\.\s{1,4}(?P<loc>Indoor|Outdoor)",
+    re.IGNORECASE,
+)
+
+# "a.  PVC:  20 mils thick."  or  "b.  Aluminum, Corrugated:  0.020 inch thick"
+_JACKET_THICK_RE = re.compile(
+    r"^[a-z]\.\s{1,4}(?P<type>.+?):\s+"
+    r"(?P<thick>[\d\.]+)\s+(?:mils?\s+thick|inch(?:es?)?\s+thick)",
+    re.IGNORECASE,
+)
+
 
 # ── public API ────────────────────────────────────────────────────────────────
 
@@ -162,8 +209,9 @@ def parse_text_pipe_insulation(
 ) -> list[dict]:
     """Extract pipe insulation rows from plain text using regex state machine.
 
-    Tries Format A (CSI numbered-list) first.  If that yields fewer than 2 rows
-    also tries Format B (UO2 paragraph style) and returns whichever is richer.
+    Tries Format A (CSI numbered-list), Format B (UO2 paragraph style), and
+    Format C (PHX73-style lettered schedule headers).  Returns the format that
+    yields the most rows.
 
     Args:
         page_texts: Per-page text strings (from PyMuPDF / fitz).
@@ -172,13 +220,87 @@ def parse_text_pipe_insulation(
     Returns:
         List of PipeInsulationRow dicts (normalised).
     """
-    # Join pages preserving line structure; unicode/fraction cleanup happens
-    # per-line inside the parsers to avoid collapsing newlines with _clean().
     full_text = "\n".join(page_texts)
     rows_a = _parse_format_a(full_text, pdf_file)
     rows_b = _parse_format_b(full_text, pdf_file)
-    rows = rows_a if len(rows_a) >= len(rows_b) else rows_b
-    return [normalize_pipe_row(r) for r in rows]
+    rows_c = _parse_format_c(full_text, pdf_file)
+    best = max([rows_a, rows_b, rows_c], key=len)
+    return [normalize_pipe_row(r) for r in best]
+
+
+def parse_pipe_insulation_text(page_texts, pdf_file: str = "") -> list[dict]:
+    """Alias for parse_text_pipe_insulation; accepts list[str] or list[PageText]."""
+    texts = [p.text if hasattr(p, "text") else p for p in page_texts]
+    return parse_text_pipe_insulation(texts, pdf_file=pdf_file)
+
+
+def parse_outline_jacket_schedule(
+    page_texts: list[str],
+    pdf_file: str = "",
+) -> list[dict]:
+    """Parse CSI outline-style field-applied jacket schedules (section 3.14 pattern).
+
+    3.14  FIELD-APPLIED JACKET SCHEDULE
+    A.  Indoor, Field-Applied Jacket Schedule
+        3.  Piping, Non-potable water piping and Refrigerant
+            a.  PVC:  20 mils thick.
+            b.  Aluminum, Corrugated:  0.020 inch thick
+
+    Returns JacketRule dicts (same schema as jacket_parser.parse_jacket_rules).
+    """
+    full_text = "\n".join(page_texts)
+    rows: list[dict] = []
+    in_jacket = False
+    current_location = ""
+    current_service = ""
+
+    for stripped in _join_bullet_lines(full_text.splitlines()):
+        if not stripped:
+            continue
+
+        # End of jacket schedule on new CSI section number
+        if in_jacket and _NEXT_SECTION_C_RE.match(stripped):
+            in_jacket = False
+            continue
+
+        # Jacket schedule start (guard prevents re-triggering on sub-items)
+        if not in_jacket and _JACKET_SCHED_HDR_RE.search(stripped):
+            in_jacket = True
+            current_location = current_service = ""
+            continue
+
+        if not in_jacket:
+            continue
+
+        # Location header: "A.  Indoor, Field-Applied Jacket Schedule"
+        m = _JACKET_LOC_RE.match(stripped)
+        if m:
+            loc = m.group("loc").strip()
+            current_location = "Indoor" if loc.lower().startswith("indoor") else "Outdoor"
+            current_service = ""
+            continue
+
+        # Numbered item: "3.  Piping, Non-potable water piping and Refrigerant"
+        # Instructional items (1, 2) have no lettered sub-bullets → never produce output
+        m = re.match(r"^\d+\.\s{1,4}(.+)", stripped)
+        if m:
+            current_service = m.group(1).rstrip(": \t")
+            continue
+
+        # Lettered jacket material: "a.  PVC:  20 mils thick."
+        m = _JACKET_THICK_RE.match(stripped)
+        if m:
+            rows.append({
+                "Location": current_location,
+                "Application": "Pipe",
+                "Jacket_Type": m.group("type").strip(),
+                "Jacket_Material": m.group("type").strip(),
+                "Rule_Text": stripped,
+                "Confidence": 0.90,
+                "PDF_File": pdf_file,
+            })
+
+    return rows
 
 
 # ── format-A parser ───────────────────────────────────────────────────────────
@@ -295,6 +417,92 @@ def _parse_format_b(text: str, pdf_file: str) -> list[dict]:
                 "Insulation_Type": "Mineral Fiber / Elastomeric (see spec)",
                 "Jacket_Required": "",
                 "Notes": "",
+                "PDF_File": pdf_file,
+            })
+
+    return rows
+
+
+# ── format-C parser ───────────────────────────────────────────────────────────
+
+def _parse_format_c(text: str, pdf_file: str) -> list[dict]:
+    """Parse Format C: PHX73 / MasterSpec HVAC outline-style schedules.
+
+    D.  INDOOR PIPING INSULATION SCHEDULE
+        1.  Non-Potable Water, Chilled Water...:
+            a.  Cellular Glass:  1-1/2 inches thick.
+    E.  OUTDOOR, ABOVEGROUND PIPING INSULATION SCHEDULE
+        1.  Non-Potable Water...:
+            a.  Cellular Glass:  2 inches thick.
+
+    Location (Indoor / Outdoor - Aboveground / Outdoor - Underground) is
+    stored in the Notes field of each row.
+    """
+    rows: list[dict] = []
+    in_schedule = False
+    current_location = ""
+    current_service = ""
+    pending_service = False  # True when numbered service line wrapped to next line
+
+    for stripped in _join_bullet_lines(text.splitlines()):
+        if not stripped:
+            continue
+
+        # End on a new CSI section number ("3.14" alone or "3.15  TITLE")
+        if in_schedule and _NEXT_SECTION_C_RE.match(stripped):
+            in_schedule = False
+            current_location = current_service = ""
+            pending_service = False
+            continue
+
+        # Lettered schedule header with location context
+        m = _SCHED_C_HEADER_RE.match(stripped)
+        if m:
+            in_schedule = True
+            loc = m.group("loc").upper()
+            if "UNDERGROUND" in loc:
+                current_location = "Outdoor - Underground"
+            elif "ABOVE" in loc:
+                current_location = "Outdoor - Aboveground"
+            elif "OUTDOOR" in loc:
+                current_location = "Outdoor"
+            else:
+                current_location = "Indoor"
+            current_service = ""
+            pending_service = False
+            continue
+
+        if not in_schedule:
+            continue
+
+        # Service continuation: fitz often wraps long service names across lines
+        if pending_service:
+            if not re.match(r"^[a-zA-Z]\.\s", stripped) and not re.match(r"^\d+\.\s", stripped):
+                current_service = (current_service + " " + stripped).rstrip(": \t")
+                if stripped.rstrip().endswith(":"):
+                    pending_service = False
+                continue
+            pending_service = False
+
+        # Numbered service line: "1.  Non-Potable Water, Chilled Water...:"
+        m = re.match(r"^\d+\.\s{1,4}(.+)", stripped)
+        if m:
+            svc_text = m.group(1).rstrip(": \t")
+            current_service = svc_text
+            # Mark pending if line didn't end with colon (name may wrap)
+            pending_service = not stripped.rstrip().endswith(":")
+            continue
+
+        # Lettered material/thickness: "a.  Cellular Glass:  1-1/2 inches thick."
+        m = _THICK_A_RE.match(stripped)
+        if m and current_service:
+            rows.append({
+                "Service": current_service,
+                "Pipe_Size_Range": "All",
+                "Thickness": _norm_thickness(m.group("thick")),
+                "Insulation_Type": m.group("type").strip(),
+                "Jacket_Required": "",
+                "Notes": current_location,
                 "PDF_File": pdf_file,
             })
 
