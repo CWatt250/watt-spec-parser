@@ -14,15 +14,20 @@ import pdfplumber
 def extract_tables_from_pdf(
     pdf_path: str,
     page_numbers: Optional[list[int]] = None,
+    include_page_text: bool = False,
 ) -> list[dict]:
     """Extract tables from a PDF.
 
     Args:
         pdf_path: Path to the PDF file.
         page_numbers: 1-based page numbers to extract from. None = all pages.
+        include_page_text: If True, include raw page text in each result dict
+                           under the key ``page_text`` — useful for inferring
+                           material type from surrounding headings.
 
     Returns:
         List of dicts: {page_num, table_index, rows: [[cell_str, ...]]}
+        and optionally page_text.
         Cells are strings (None replaced with "").
     """
     results: list[dict] = []
@@ -35,8 +40,10 @@ def extract_tables_from_pdf(
             if page_num < 1 or page_num > total:
                 continue
             page = pdf.pages[page_num - 1]
-            tables = page.extract_tables()
-            for t_idx, raw_table in enumerate(tables or []):
+            page_text = page.extract_text() or "" if include_page_text else ""
+            found_tables = page.find_tables()
+            raw_tables = page.extract_tables()
+            for t_idx, raw_table in enumerate(raw_tables or []):
                 # Normalize: replace None with "", strip whitespace
                 rows = [
                     [
@@ -48,13 +55,25 @@ def extract_tables_from_pdf(
                 # Skip empty tables
                 if not any(any(c for c in row) for row in rows):
                     continue
-                results.append(
-                    {
-                        "page_num": page_num,
-                        "table_index": t_idx,
-                        "rows": rows,
-                    }
-                )
+                entry: dict = {
+                    "page_num": page_num,
+                    "table_index": t_idx,
+                    "rows": rows,
+                }
+                if include_page_text:
+                    # Extract text ABOVE this specific table using its bbox
+                    # so parsers can infer material from the nearest heading.
+                    above_text = page_text  # fallback: full page
+                    if t_idx < len(found_tables):
+                        tbl_bbox = found_tables[t_idx].bbox  # (x0, top, x1, bottom)
+                        tbl_top = tbl_bbox[1]
+                        try:
+                            cropped = page.crop((0, 0, page.width, tbl_top))
+                            above_text = cropped.extract_text() or ""
+                        except Exception:
+                            above_text = page_text
+                    entry["page_text"] = above_text
+                results.append(entry)
 
     return results
 
