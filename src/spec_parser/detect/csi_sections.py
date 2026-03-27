@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+from collections import defaultdict
 from typing import Optional
 
 from spec_parser.models.types import PageText, SourceSection
@@ -90,14 +91,36 @@ def detect_source_sections(project_file: str, pages: list[PageText]) -> list[Sou
             )
         ]
 
-    last_page = pages[-1].page_num if pages else hits[-1]["page_num"]
+    # Deduplicate: group hits by normalized section number.
+    # Footer repeats of the same section number across pages produce one logical section.
+    groups: dict[str, list[dict]] = defaultdict(list)
+    for h in hits:
+        key = h["normalized_section_number"] or h["section_number"] or "_unknown_"
+        groups[key].append(h)
+
+    # For each group, pick the canonical hit (prefer "SECTION"-prefixed header,
+    # then highest confidence), and set start_page/end_page to span all occurrences.
+    merged: list[dict] = []
+    for _key, group_hits in groups.items():
+        canonical = max(
+            group_hits,
+            key=lambda x: (
+                1 if (x["raw_header_text"] or "").upper().startswith("SECTION") else 0,
+                x["confidence"],
+            ),
+        )
+        merged.append(
+            {
+                **canonical,
+                "start_page": min(h["page_num"] for h in group_hits),
+                "end_page": max(h["page_num"] for h in group_hits),
+            }
+        )
+
+    merged.sort(key=lambda x: x["start_page"])
 
     sections: list[SourceSection] = []
-    for i, h in enumerate(hits):
-        start_page = h["page_num"]
-        next_start = hits[i + 1]["page_num"] if i + 1 < len(hits) else (last_page + 1)
-        end_page = max(start_page, next_start - 1)
-
+    for h in merged:
         sections.append(
             SourceSection(
                 project_file=project_file,
@@ -106,12 +129,12 @@ def detect_source_sections(project_file: str, pages: list[PageText]) -> list[Sou
                 normalized_section_number=h["normalized_section_number"],
                 section_title=h["title"],
                 category=None,
-                start_page=start_page,
-                end_page=end_page,
+                start_page=h["start_page"],
+                end_page=h["end_page"],
                 detection_method=h["method"],
                 confidence=float(h["confidence"]),
                 relevance="unknown",
-                parse_notes=h.get("notes", "Exact header match"),
+                parse_notes=h.get("notes", "Exact header match") + " [deduped from footer repeats]",
                 source_text_excerpt=None,
             )
         )
