@@ -1,13 +1,15 @@
-"""Table extraction from PDFs using pdfplumber.
+"""Table extraction from PDFs.
 
-Pulls structured table data from schedule pages (typically pages 13-15 in
-HVAC insulation specs). Returns raw cell data for downstream parsers.
+Uses pdfplumber exclusively for bordered-table detection (find_tables /
+extract_tables).  All plain-text extraction uses PyMuPDF (fitz) which is
+5-10x faster than pdfplumber's text layer.
 """
 
 from __future__ import annotations
 
 from typing import Optional
 
+import fitz  # PyMuPDF
 import pdfplumber
 
 
@@ -27,6 +29,8 @@ def extract_tables_from_pdf(
     """
     results: list[dict] = []
 
+    fitz_doc = fitz.open(pdf_path)
+
     with pdfplumber.open(pdf_path) as pdf:
         total = len(pdf.pages)
         targets = page_numbers if page_numbers else list(range(1, total + 1))
@@ -35,9 +39,13 @@ def extract_tables_from_pdf(
             if page_num < 1 or page_num > total:
                 continue
             page = pdf.pages[page_num - 1]
+            fitz_page = fitz_doc.load_page(page_num - 1)
+
             table_objects = page.find_tables()
             raw_tables = page.extract_tables()
-            full_page_text = page.extract_text() or ""
+
+            # Use fitz for full-page text (faster than pdfplumber text layer)
+            full_page_text = fitz_page.get_text("text") or ""
 
             for t_idx, (raw_table, tbl_obj) in enumerate(
                 zip(raw_tables or [], table_objects or [])
@@ -53,11 +61,13 @@ def extract_tables_from_pdf(
                 if not any(any(c for c in row) for row in rows):
                     continue
 
-                # Extract text above the table (up to 200 pts above bbox top)
+                # Extract text above the table (up to 200 pts above bbox top).
+                # pdfplumber bbox: (x0, top, x1, bottom) — same top-left
+                # origin as fitz, so coordinates are directly compatible.
                 bbox = tbl_obj.bbox  # (x0, top, x1, bottom)
                 above_top = max(0, bbox[1] - 200)
-                context_region = page.within_bbox((0, above_top, page.width, bbox[1]))
-                pre_table_text = (context_region.extract_text() or "").strip()
+                clip = fitz.Rect(0, above_top, fitz_page.rect.width, bbox[1])
+                pre_table_text = (fitz_page.get_text("text", clip=clip) or "").strip()
 
                 results.append(
                     {
@@ -69,6 +79,7 @@ def extract_tables_from_pdf(
                     }
                 )
 
+    fitz_doc.close()
     return results
 
 
