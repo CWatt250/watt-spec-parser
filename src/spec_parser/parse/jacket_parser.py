@@ -80,6 +80,99 @@ _PIPE_JACKET_PATTERNS: list[tuple[str, str, str, re.Pattern]] = [
             re.IGNORECASE,
         ),
     ),
+    # ── expanded patterns ─────────────────────────────────────────────────────
+    (
+        "Indoor - Standard",
+        "Pipe",
+        "ASJ",
+        re.compile(
+            r"all[\s-]*service\s+jacket|(?<!\w)ASJ(?!\w)",
+            re.IGNORECASE,
+        ),
+    ),
+    (
+        "Indoor - Exposed",
+        "Pipe",
+        "PVC",
+        re.compile(
+            r"(?:install|provide|apply)\s+(?:a\s+)?(?:fitted\s+)?PVC\s+(?:cover|jacket|lap|sleeve)",
+            re.IGNORECASE,
+        ),
+    ),
+    (
+        "Indoor - Exposed",
+        "Pipe",
+        "Canvas / Glass Cloth",
+        re.compile(
+            r"canvas\s+jacket|glass[\s-]cloth\s+jacket|fiberglass\s+cloth\s+jacket"
+            r"|lagging\s+cloth",
+            re.IGNORECASE,
+        ),
+    ),
+    (
+        "Outdoor",
+        "Pipe",
+        "Aluminum Jacket",
+        re.compile(
+            r"install\s+aluminum\s+jacket|aluminum\s+jacket\s+with\s+all\s+joints"
+            r"|apply\s+(?:a\s+)?(?:corrugated\s+)?aluminum\s+jacket",
+            re.IGNORECASE,
+        ),
+    ),
+    (
+        "Outdoor",
+        "Pipe",
+        "Weather Barrier",
+        re.compile(
+            r"weather[\s-]+(?:barrier|protection)\s+jacket"
+            r"|weatherproof\s+jacket"
+            r"|weather[\s-]+resistant\s+(?:jacket|finish|coating)",
+            re.IGNORECASE,
+        ),
+    ),
+    (
+        "Cold Service - Indoor",
+        "Pipe",
+        "Vapor Barrier",
+        re.compile(
+            r"vapor[\s-]+(?:barrier|retarder)\s+(?:jacket|mastic|wrap|membrane)"
+            r"|VB\s+jacket"
+            r"|install\s+vapor\s+barriers?\s+on\s+insulated\s+pipe",
+            re.IGNORECASE,
+        ),
+    ),
+    (
+        "General",
+        "Pipe",
+        "Mastic / Protective Coating",
+        re.compile(
+            r"apply\s+(?:two\s+coats?\s+of\s+)?(?:insulation\s+manufacturer.s\s+)?"
+            r"recommended\s+protective\s+(?:coating|mastic)"
+            r"|elastomeric\s+mastic|breather\s+mastic"
+            r"|vapor[\s-]+barrier\s+mastic",
+            re.IGNORECASE,
+        ),
+    ),
+    (
+        "Outdoor",
+        "Pipe",
+        "Metal Jacket",
+        re.compile(
+            r"finish\s+exposed\s+surfaces\s+with\s+a\s+metal\s+jacket"
+            r"|metal\s+jacket\s+is\s+indicated",
+            re.IGNORECASE,
+        ),
+    ),
+    (
+        "Outdoor",
+        "Pipe",
+        "Field-Applied Jacket",
+        re.compile(
+            r"field[\s-]+applied\s+jacket\s+schedule"
+            r"|outdoor[,\s]+field[\s-]+applied\s+(?:vapor\s+barrier\s+and\s+)?jacket",
+            re.IGNORECASE,
+        ),
+    ),
 ]
 
 _DUCT_JACKET_PATTERNS: list[tuple[str, str, str, re.Pattern]] = [
@@ -116,6 +209,34 @@ _DUCT_JACKET_PATTERNS: list[tuple[str, str, str, re.Pattern]] = [
         "Weather-Proof Jacket",
         re.compile(
             r"for\s+exterior\s+applications?[^.]*provide\s+insulation\s+with\s+a\s+weather\s+protection\s+jacket",
+            re.IGNORECASE | re.DOTALL,
+        ),
+    ),
+    # ── expanded duct patterns ────────────────────────────────────────────────
+    (
+        "Indoor - Duct",
+        "Duct",
+        "FSK / ASJ",
+        re.compile(
+            r"(?:FSK|foil[\s-]+scrim[\s-]+kraft|all[\s-]+service\s+jacket)[^.]{0,60}(?:duct|facing)",
+            re.IGNORECASE | re.DOTALL,
+        ),
+    ),
+    (
+        "Outdoor - Duct",
+        "Duct",
+        "Aluminum Jacket (ALJ)",
+        re.compile(
+            r"Type\s+ALJ\s+jacket|aluminum\s+jacket[^.]{0,40}duct",
+            re.IGNORECASE | re.DOTALL,
+        ),
+    ),
+    (
+        "Outdoor - Duct",
+        "Duct",
+        "UV-Resistant Finish",
+        re.compile(
+            r"UV[\s-]+resistant\s+(?:paint|finish|coating)[^.]{0,40}(?:duct|exterior|outside)",
             re.IGNORECASE | re.DOTALL,
         ),
     ),
