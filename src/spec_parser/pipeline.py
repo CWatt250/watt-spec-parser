@@ -3,9 +3,13 @@ from __future__ import annotations
 import os
 
 from spec_parser.extract.pdf_text import extract_pages
+from spec_parser.extract.table_extract import extract_schedule_tables
 from spec_parser.normalize.text_norm import normalize_text
 from spec_parser.detect.csi_sections import detect_source_sections
 from spec_parser.detect.section_classifier import classify_sections
+from spec_parser.parse.pipe_parser import parse_pipe_insulation
+from spec_parser.parse.duct_parser import parse_duct_insulation
+from spec_parser.parse.jacket_parser import parse_jacket_rules_from_pdf
 from spec_parser.export.excel import export_source_sections_xlsx
 from spec_parser.export.json_out import export_source_sections_json
 from spec_parser.export.section_text import export_section_text
@@ -109,4 +113,75 @@ def run_phase1(pdf_path: str, out_dir: str) -> dict[str, str]:
         "warnings": warn_path,
         "section_text_dir": section_text_dir,
         "run_summary": run_summary_path,
+    }
+
+
+def run_single(pdf_path: str, out_dir: str) -> dict:
+    """Full pipeline for one PDF: sections + insulation schedules + jacket rules.
+
+    Returns a dict with all source-section and parsed rows, plus file paths.
+    """
+    project_file = os.path.basename(pdf_path)
+
+    pages_raw = extract_pages(pdf_path)
+    warnings = _compute_warnings(pages_raw)
+
+    pages_norm = [
+        type(p)(page_num=p.page_num, text=normalize_text(p.text))
+        for p in pages_raw
+    ]
+
+    sections = detect_source_sections(project_file=project_file, pages=pages_norm)
+    sections = classify_sections(sections)
+
+    # Extract insulation schedule tables via pdfplumber
+    tables = extract_schedule_tables(pdf_path)
+    pipe_rows = parse_pipe_insulation(tables, pdf_file=project_file)
+    duct_rows = parse_duct_insulation(tables, pdf_file=project_file)
+
+    # Extract jacket rules via fitz prose scan
+    jacket_rows = parse_jacket_rules_from_pdf(pdf_path, pdf_file=project_file)
+
+    return {
+        "project_file": project_file,
+        "sections": sections,
+        "pipe_rows": pipe_rows,
+        "duct_rows": duct_rows,
+        "jacket_rows": jacket_rows,
+        "warnings": warnings,
+        "pages_raw": pages_raw,
+        "pages_norm": pages_norm,
+    }
+
+
+def run_multi(
+    pdf_paths: list[str],
+    out_dir: str,
+) -> dict:
+    """Run the full pipeline over multiple PDFs and aggregate into a MASTER dataset.
+
+    Each row is tagged with PDF_File.
+    Returns aggregated data and writes the combined Excel to out_dir.
+    """
+    all_sections = []
+    all_pipe: list[dict] = []
+    all_duct: list[dict] = []
+    all_jacket: list[dict] = []
+    all_warnings: list[str] = []
+
+    for pdf_path in pdf_paths:
+        result = run_single(pdf_path, out_dir)
+        all_sections.extend(result["sections"])
+        all_pipe.extend(result["pipe_rows"])
+        all_duct.extend(result["duct_rows"])
+        all_jacket.extend(result["jacket_rows"])
+        for w in result["warnings"]:
+            all_warnings.append(f"{result['project_file']}: {w}")
+
+    return {
+        "sections": all_sections,
+        "pipe_rows": all_pipe,
+        "duct_rows": all_duct,
+        "jacket_rows": all_jacket,
+        "warnings": all_warnings,
     }
