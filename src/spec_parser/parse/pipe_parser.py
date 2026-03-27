@@ -68,12 +68,31 @@ def _is_header_row(row: list[str]) -> bool:
 
 # ── table classifiers ─────────────────────────────────────────────────────────
 
+_REJECT_TABLE_KEYWORDS = (
+    "test pressure",
+    "test medium",
+    "hydrostatic",
+    "pneumatic test",
+    "pressure class",
+    "design pressure",
+)
+
+
 def _looks_like_pipe_table(rows: list[list[str]]) -> bool:
-    """True if this table looks like a piping insulation schedule."""
+    """True if this table looks like a piping insulation schedule.
+
+    Rejects tables that are clearly non-insulation schedules (pressure-test
+    tables, hydrostatic schedules, etc.) even when they appear on pages
+    within an insulation section due to running headers.
+    """
     if not rows:
         return False
-    joined = " ".join(" ".join(r) for r in rows[:3]).lower()
-    return "pipe size" in joined or "piping" in joined
+    # Look across all header rows (first 4) for classification signals
+    header_text = " ".join(" ".join(r) for r in rows[:4]).lower()
+    for kw in _REJECT_TABLE_KEYWORDS:
+        if kw in header_text:
+            return False
+    return "pipe size" in header_text or "piping" in header_text
 
 
 # ── row parser ────────────────────────────────────────────────────────────────
