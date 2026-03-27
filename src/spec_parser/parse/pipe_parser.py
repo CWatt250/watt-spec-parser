@@ -60,6 +60,57 @@ def _clean(text: str) -> str:
     return text
 
 
+def _clean_thickness(text: str) -> str:
+    """Fix pdfplumber word-wrap artifacts in thickness and service cell text.
+
+    pdfplumber frequently concatenates adjacent words without spaces, producing
+    artefacts like "Upto11/2", "11/2andover", "Recir- culation".  This function
+    normalises the most common patterns before they reach the alias normaliser.
+    """
+    # Repair hyphenated line-break artefacts: "Recir- culation" → "Recirculation"
+    # Only collapse when the right side starts with a lowercase letter (not a
+    # proper compound like "self-contained").
+    text = re.sub(r"(\w)-\s+([a-z])", r"\1\2", text)
+
+    # Fix "Upto" / "Upto2" → "Up to " — must run before mixed-number fix
+    # so that "Upto11/2" → "Up to 11/2" → (next step) "Up to 1-1/2"
+    text = re.sub(r"\bUpto\s*", "Up to ", text, flags=re.IGNORECASE)
+
+    # Fix "Lessthan" → "Less than " (absorb any run-together space)
+    text = re.sub(r"\bLessthan\s*", "Less than ", text, flags=re.IGNORECASE)
+
+    # Fix "AllSizes" → "All Sizes"
+    text = re.sub(r"\bAllSizes\b", "All Sizes", text, flags=re.IGNORECASE)
+
+    # Fix "andover" / "andunder" / "andabove" / "andbelow" —
+    # digit/non-word immediately followed by "and..." has no \b boundary,
+    # so match the digit explicitly first, then catch remaining \b cases.
+    for _pat, _rep in [
+        (r"(\d)\s*andover\b",  r"\1 and over"),
+        (r"(\d)\s*andunder\b", r"\1 and under"),
+        (r"(\d)\s*andabove\b", r"\1 and above"),
+        (r"(\d)\s*andbelow\b", r"\1 and below"),
+    ]:
+        text = re.sub(_pat, _rep, text, flags=re.IGNORECASE)
+    for _pat, _rep in [
+        (r"\bandover\b",  "and over"),
+        (r"\bandunder\b", "and under"),
+        (r"\bandabove\b", "and above"),
+        (r"\bandbelow\b", "and below"),
+    ]:
+        text = re.sub(_pat, _rep, text, flags=re.IGNORECASE)
+
+    # Fix space-separated mixed numbers: "1 1/2" → "1-1/2"
+    text = re.sub(r"\b(\d)\s+(1/[2-9])\b", r"\1-\2", text)
+
+    # Fix run-together mixed numbers: "11/2" → "1-1/2", "21/2" → "2-1/2"
+    # No leading/trailing \b — after "Upto"→"Up to " the "1" now has a
+    # space before it; after "andover" fixes the fraction may be at end of word.
+    text = re.sub(r"(?<!\d)(\d)(1/[2-9])(?!\d)", r"\1-\2", text)
+
+    return text
+
+
 def _is_header_row(row: list[str]) -> bool:
     """True if row looks like a column header (contains known header words)."""
     joined = " ".join(row).lower()
@@ -128,14 +179,14 @@ def _parse_pipe_table(
         # Some tables have 3 cols (no leading blank): [service, thickness, notes]
         # Detect by checking if col[1] looks like a pipe size
         if len(cells) >= 4:
-            col_service = cells[0]
-            col_size = cells[1]
-            col_thick = cells[2]
+            col_service = _clean_thickness(cells[0])
+            col_size = _clean_thickness(cells[1])
+            col_thick = _clean_thickness(cells[2])
             col_notes = cells[3]
         else:
-            col_service = cells[0]
+            col_service = _clean_thickness(cells[0])
             col_size = ""
-            col_thick = cells[1] if len(cells) > 1 else ""
+            col_thick = _clean_thickness(cells[1]) if len(cells) > 1 else ""
             col_notes = cells[2] if len(cells) > 2 else ""
 
         # A non-empty first column resets the current service
