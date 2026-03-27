@@ -35,9 +35,14 @@ def extract_tables_from_pdf(
             if page_num < 1 or page_num > total:
                 continue
             page = pdf.pages[page_num - 1]
-            tables = page.extract_tables()
-            for t_idx, raw_table in enumerate(tables or []):
-                # Normalize: replace None with "", strip whitespace
+            table_objects = page.find_tables()
+            raw_tables = page.extract_tables()
+            full_page_text = page.extract_text() or ""
+
+            for t_idx, (raw_table, tbl_obj) in enumerate(
+                zip(raw_tables or [], table_objects or [])
+            ):
+                # Normalize cells
                 rows = [
                     [
                         (cell or "").replace("\n", " ").strip()
@@ -45,14 +50,22 @@ def extract_tables_from_pdf(
                     ]
                     for row in raw_table
                 ]
-                # Skip empty tables
                 if not any(any(c for c in row) for row in rows):
                     continue
+
+                # Extract text above the table (up to 200 pts above bbox top)
+                bbox = tbl_obj.bbox  # (x0, top, x1, bottom)
+                above_top = max(0, bbox[1] - 200)
+                context_region = page.within_bbox((0, above_top, page.width, bbox[1]))
+                pre_table_text = (context_region.extract_text() or "").strip()
+
                 results.append(
                     {
                         "page_num": page_num,
                         "table_index": t_idx,
                         "rows": rows,
+                        "page_text": full_page_text,
+                        "pre_table_text": pre_table_text,
                     }
                 )
 
