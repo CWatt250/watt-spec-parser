@@ -10,6 +10,7 @@ from spec_parser.detect.section_classifier import classify_sections
 from spec_parser.parse.pipe_parser import parse_pipe_insulation
 from spec_parser.parse.duct_parser import parse_duct_insulation
 from spec_parser.parse.jacket_parser import parse_jacket_rules, parse_jacket_rules_from_pdf
+from spec_parser.parse.text_fallback_parser import parse_text_pipe_insulation
 from spec_parser.export.excel import export_source_sections_xlsx
 from spec_parser.export.json_out import export_source_sections_json
 from spec_parser.export.section_text import export_section_text
@@ -197,6 +198,18 @@ def run_single(pdf_path: str, out_dir: str) -> dict:
 
     pipe_rows = parse_pipe_insulation(tables, pdf_file=project_file)
     duct_rows = parse_duct_insulation(tables, pdf_file=project_file)
+
+    # If pdfplumber found no pipe rows, fall back to the text-based parser.
+    # This handles specs that use plain numbered-list schedules with no ruled
+    # table borders (e.g. PHX73/220700, PHX83, UO2.MO/22-07-00).
+    if not pipe_rows:
+        page_text_strs = [p.text for p in pages_raw]
+        if insul_pages:
+            insul_page_set = set(insul_pages)
+            page_text_strs = [p.text for p in pages_raw if p.page_num in insul_page_set]
+        fallback_rows = parse_text_pipe_insulation(page_text_strs, pdf_file=project_file)
+        if fallback_rows:
+            pipe_rows = fallback_rows
 
     # Jacket rules: scope to insulation-section pages when known
     if insul_pages:
