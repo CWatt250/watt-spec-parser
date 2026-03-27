@@ -15,6 +15,7 @@ import tkinter as tk
 from tkinter import filedialog, ttk
 
 import customtkinter as ctk
+from tkinterdnd2 import DND_FILES, TkinterDnD
 
 # ── theme ────────────────────────────────────────────────────────────────────
 ctk.set_appearance_mode("light")
@@ -155,9 +156,10 @@ def _run_parse(pdf_path: str, out_dir: str, scope: str, q: queue.Queue) -> None:
 # Main application
 # ─────────────────────────────────────────────────────────────────────────────
 
-class SpecParserApp(ctk.CTk):
+class SpecParserApp(TkinterDnD.DnDWrapper, ctk.CTk):
     def __init__(self):
-        super().__init__()
+        ctk.CTk.__init__(self)
+        self.TkdndVersion = TkinterDnD._require(self)
         self.title("Watt Spec Parser")
         self.geometry("1300x820")
         self.minsize(1000, 660)
@@ -215,10 +217,16 @@ class SpecParserApp(ctk.CTk):
         self._drop_frame.grid_rowconfigure(1, weight=1)
 
         self._drop_label = ctk.CTkLabel(
-            self._drop_frame, text="No file selected",
+            self._drop_frame, text="Drag & Drop PDF Here\nor Click Browse",
             font=ctk.CTkFont(size=11), text_color="gray",
             wraplength=300)
         self._drop_label.grid(row=0, column=0, padx=10, pady=(10, 2))
+
+        # Register drop zone for drag & drop
+        self._drop_frame.drop_target_register(DND_FILES)
+        self._drop_frame.dnd_bind("<<Drop>>", self._on_drop)
+        self._drop_label.drop_target_register(DND_FILES)
+        self._drop_label.dnd_bind("<<Drop>>", self._on_drop)
 
         ctk.CTkButton(self._drop_frame, text="Browse PDF…", width=130, height=28,
                       command=self._browse_pdf).grid(
@@ -382,6 +390,18 @@ class SpecParserApp(ctk.CTk):
         return val
 
     # ── Actions ───────────────────────────────────────────────────────────────
+
+    def _on_drop(self, event):
+        path = event.data.strip()
+        # tkinterdnd2 on Windows wraps paths with spaces in curly braces
+        if path.startswith("{") and path.endswith("}"):
+            path = path[1:-1]
+        # If multiple files dropped, take the first
+        if not path.lower().endswith(".pdf"):
+            self._log("Drop ignored: not a PDF file.")
+            return
+        self._pdf_path = path
+        self._drop_label.configure(text=os.path.basename(path), text_color="#3c3f99")
 
     def _browse_pdf(self):
         path = filedialog.askopenfilename(
