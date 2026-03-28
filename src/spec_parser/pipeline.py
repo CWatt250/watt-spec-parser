@@ -159,11 +159,16 @@ def run_single(pdf_path: str, out_dir: str) -> dict:
             pipe_rows = parse_pipe_insulation(md_tables, pdf_file=project_file)
             duct_rows = parse_duct_insulation(md_tables, pdf_file=project_file)
 
-    # ── Step 2b: outline-style text schedules (CSI format) ───────────────────
+    # ── Step 2b: outline-style text schedules (CSI format + markdown) ────────
     page_texts = [p.text for p in pages_norm]
     try:
         from spec_parser.parse.text_fallback_parser import parse_pipe_insulation_text
         outline_pipe = parse_pipe_insulation_text(page_texts, pdf_file=project_file)
+        # Also try against markdown — pymupdf4llm uses **D.** bold markers
+        if md_text:
+            md_outline_pipe = parse_pipe_insulation_text([md_text], pdf_file=project_file)
+            if len(md_outline_pipe) > len(outline_pipe):
+                outline_pipe = md_outline_pipe
     except Exception:
         outline_pipe = []
 
