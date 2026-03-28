@@ -51,6 +51,8 @@ def _run_parse(pdf_path: str, out_dir: str, scope: str, q: queue.Queue) -> None:
         post("log", "Importing pipeline modules…")
         from spec_parser.extract.pdf_text import extract_pages
         from spec_parser.extract.table_extract import extract_schedule_tables
+        from spec_parser.extract.md_extract import extract_markdown
+        from spec_parser.extract.md_table_parser import parse_markdown_tables
         from spec_parser.normalize.text_norm import normalize_text
         from spec_parser.detect.csi_sections import detect_source_sections
         from spec_parser.detect.section_classifier import classify_sections
@@ -61,7 +63,7 @@ def _run_parse(pdf_path: str, out_dir: str, scope: str, q: queue.Queue) -> None:
 
         project_file = os.path.basename(pdf_path)
 
-        # ── text extraction ───────────────────────────────────────────────────
+        # ── fitz text extraction ──────────────────────────────────────────────
         post("log", "Extracting pages with PyMuPDF…")
         pages_raw = extract_pages(pdf_path)
         post("log", f"  → {len(pages_raw)} pages extracted")
@@ -71,6 +73,7 @@ def _run_parse(pdf_path: str, out_dir: str, scope: str, q: queue.Queue) -> None:
             type(p)(page_num=p.page_num, text=normalize_text(p.text))
             for p in pages_raw
         ]
+        page_texts = [p.text for p in pages_norm]
 
         # ── section detection ─────────────────────────────────────────────────
         post("log", "Detecting CSI sections…")
@@ -78,27 +81,51 @@ def _run_parse(pdf_path: str, out_dir: str, scope: str, q: queue.Queue) -> None:
         sections = classify_sections(sections)
         post("log", f"  → {len(sections)} sections detected")
 
-        # ── table extraction ──────────────────────────────────────────────────
-        post("log", "Extracting schedule tables with pdfplumber…")
-        tables = extract_schedule_tables(pdf_path)
-        post("log", f"  → {len(tables)} tables found")
+        # ── Step 1: pymupdf4llm markdown extraction ───────────────────────────
+        post("log", "Extracting markdown with pymupdf4llm…")
+        md_text = ""
+        try:
+            md_text = extract_markdown(pdf_path)
+            post("log", f"  → {len(md_text)} chars of markdown")
+        except Exception as e:
+            post("log", f"  [warn] Markdown extraction failed: {e}")
 
         # ── pipe parsing ──────────────────────────────────────────────────────
         run_pipe = scope in ("Full Scope", "HVAC Piping", "Plumbing Piping", "Custom")
         pipe_rows: list[dict] = []
+        duct_rows_md: list[dict] = []
+
         if run_pipe:
             post("log", "Parsing pipe insulation…")
-            pipe_rows = parse_pipe_insulation(tables, pdf_file=project_file)
-            post("log", f"  → {len(pipe_rows)} pipe rows")
-            # text fallback if empty
+
+            # Step 2a: markdown tables
+            if md_text:
+                md_tables = parse_markdown_tables(md_text)
+                if md_tables:
+                    post("log", f"  → {len(md_tables)} markdown tables found")
+                    pipe_rows = parse_pipe_insulation(md_tables, pdf_file=project_file)
+                    duct_rows_md = parse_duct_insulation(md_tables, pdf_file=project_file)
+                    post("log", f"  → {len(pipe_rows)} pipe rows (markdown tables)")
+
+            # Step 2b: CSI outline text schedules
+            try:
+                from spec_parser.parse.text_fallback_parser import parse_pipe_insulation_text
+                outline_pipe = parse_pipe_insulation_text(page_texts, pdf_file=project_file)
+                if len(outline_pipe) > len(pipe_rows):
+                    post("log", f"  → {len(outline_pipe)} pipe rows (outline text, beats markdown)")
+                    pipe_rows = outline_pipe
+            except Exception as e:
+                post("log", f"  [warn] Outline pipe parse failed: {e}")
+
+            # Step 3: pdfplumber fallback
             if not pipe_rows:
-                post("log", "  → Table parser yielded 0 rows, trying text fallback…")
-                try:
-                    from spec_parser.parse.text_fallback_parser import parse_pipe_insulation_text
-                    pipe_rows = parse_pipe_insulation_text(pages_norm, pdf_file=project_file)
-                    post("log", f"  → fallback: {len(pipe_rows)} pipe rows")
-                except Exception as e:
-                    post("log", f"  [warn] Text fallback failed: {e}")
+                post("log", "  → 0 pipe rows so far, trying pdfplumber…")
+                tables = extract_schedule_tables(pdf_path)
+                post("log", f"  → {len(tables)} pdfplumber tables")
+                pipe_rows = parse_pipe_insulation(tables, pdf_file=project_file)
+                post("log", f"  → {len(pipe_rows)} pipe rows (pdfplumber)")
+
+            post("log", f"  → {len(pipe_rows)} pipe rows final")
             for r in pipe_rows:
                 post("pipe_row", r)
 
@@ -107,8 +134,14 @@ def _run_parse(pdf_path: str, out_dir: str, scope: str, q: queue.Queue) -> None:
         duct_rows: list[dict] = []
         if run_duct:
             post("log", "Parsing duct insulation…")
-            duct_rows = parse_duct_insulation(tables, pdf_file=project_file)
-            post("log", f"  → {len(duct_rows)} duct rows")
+            # Use rows from markdown tables if already found
+            if duct_rows_md:
+                duct_rows = duct_rows_md
+                post("log", f"  → {len(duct_rows)} duct rows (markdown tables)")
+            else:
+                tables = extract_schedule_tables(pdf_path)
+                duct_rows = parse_duct_insulation(tables, pdf_file=project_file)
+                post("log", f"  → {len(duct_rows)} duct rows (pdfplumber)")
             for r in duct_rows:
                 post("duct_row", r)
 
@@ -116,13 +149,9 @@ def _run_parse(pdf_path: str, out_dir: str, scope: str, q: queue.Queue) -> None:
         post("log", "Parsing jacket rules…")
         jacket_rows = parse_jacket_rules_from_pdf(pdf_path, pdf_file=project_file)
         post("log", f"  → {len(jacket_rows)} jacket rules (prose scan)")
-        # Also parse CSI outline-style jacket schedules (section 3.14 format)
         try:
             from spec_parser.parse.text_fallback_parser import parse_outline_jacket_schedule
-            outline_jacket = parse_outline_jacket_schedule(
-                [p.text for p in pages_norm],
-                pdf_file=project_file,
-            )
+            outline_jacket = parse_outline_jacket_schedule(page_texts, pdf_file=project_file)
             if outline_jacket:
                 post("log", f"  → {len(outline_jacket)} jacket rows (outline schedule)")
                 jacket_rows.extend(outline_jacket)
