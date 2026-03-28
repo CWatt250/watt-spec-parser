@@ -35,7 +35,25 @@ SERVICE_ALIASES: dict[str, list[str]] = {
     ],
     "CONDENSATE": [
         "CONDENSATE",
+        "CONDENSATE DRAIN",
+        "STEAM CONDENSATE",
         "CON",
+    ],
+    "CONDENSER WATER": [
+        "CONDENSER WATER",
+        "CONDENSER WATER SUPPLY",
+        "CONDENSER WATER RETURN",
+        "CWS",
+        "CWR",
+        "CONDENSER",
+    ],
+    "SANITARY DRAINS": [
+        "SANITARY DRAINS",
+        "SANITARY DRAIN",
+        "SANITARY WASTE",
+        "EXPOSED SANITARY",
+        "SANITARY",
+        "SANITARY PIPING",
     ],
     "STEAM": [
         "STEAM",

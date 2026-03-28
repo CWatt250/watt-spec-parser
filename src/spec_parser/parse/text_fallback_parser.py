@@ -127,11 +127,11 @@ _NEXT_SECTION_RE = re.compile(
 # ── format-A (CSI numbered-list) ──────────────────────────────────────────────
 
 # "A.  Domestic Cold Water:"  or  "A. Domestic Hot Water:"
-_SVC_LINE_RE = re.compile(r"^([A-Z])\.\s{1,4}(.+?):\s*$")
+_SVC_LINE_RE = re.compile(r"^([A-Z])\.[ \t]+(.+?):\s*$")
 
 # "1.  NPS 1 and Smaller:..."  or  "1.  All Pipe Sizes:..."
 _SIZE_LINE_RE = re.compile(
-    r"^\d+\.\s{1,4}"
+    r"^\d+\.[ \t]+"
     r"(?P<size>(?:NPS\s+[\d\-/]+[\w\s]*|All\s+Pipe\s+Sizes?))",
     re.IGNORECASE,
 )
@@ -139,7 +139,7 @@ _SIZE_LINE_RE = re.compile(
 # "a.  Mineral-Fiber ...:  1 inch thick."  or  "a.  Flexible Elastomeric:  1/2 inch thick."
 # Accepts both colon and semicolon as separator (some specs use semicolons)
 _THICK_A_RE = re.compile(
-    r"^[a-z]\.\s{1,4}(?P<type>.+?)[;:]\s+"
+    r"^[a-z]\.[ \t]+(?P<type>.+?)[;:][ \t]+"
     r"(?P<thick>[\d\-/½¾¼⅜⅝⅞]+)\s+inch(?:es?)?\s+thick",
     re.IGNORECASE,
 )
@@ -149,11 +149,11 @@ _THICK_A_RE = re.compile(
 # "1.  Service (Domestic) Water Piping:"  — catches main service labels
 # Optional trailing colon to handle lines without one
 _SVC_B_RE = re.compile(
-    r"^\d+\.\s{1,4}(.+?(?:[Ww]ater|[Hh]eating|[Cc]hilled|[Rr]efrigera|[Cc]ondensate|[Ss]torm)[^:]{0,40}):?\s*$"
+    r"^\d+\.[ \t]+(.+?(?:[Ww]ater|[Hh]eating|[Cc]hilled|[Rr]efrigera|[Cc]ondensate|[Ss]torm)[^:]{0,40}):?\s*$"
 )
 
 # "a.  Hot, 140F and under:"  — sub-service qualifier
-_SUBSVC_RE = re.compile(r"^[a-z]\.\s{1,4}(.+?)(?:\s*\([^)]*\))?\s*:\s*$")
+_SUBSVC_RE = re.compile(r"^[a-z]\.[ \t]+(.+?)(?:\s*\([^)]*\))?\s*:\s*$")
 
 # "1)  Sizes smaller than 1-1/2":  1""  or  "2)  Sizes 1-1/2" and larger:  1-1/2""
 # Handles both:
@@ -161,8 +161,8 @@ _SUBSVC_RE = re.compile(r"^[a-z]\.\s{1,4}(.+?)(?:\s*\([^)]*\))?\s*:\s*$")
 #   "1)  Sizes smaller than 1-1/2: 1"    (no inch mark in size)
 # After _clean the inch mark is ASCII 0x22.
 _SIZE_THICK_B_RE = re.compile(
-    r'^\d+\)\s{1,4}(?:Sizes?\s+)?(?P<size>[^:]+?)"\s*:\s+(?P<thick>[\d\-/]+)"?\s*$'
-    r'|^\d+\)\s{1,4}(?:Sizes?\s+)?(?P<size2>[^:]+?):\s+(?P<thick2>[\d\-/]+)"?\s*$',
+    r'^\d+\)[ \t]+(?:Sizes?\s+)?(?P<size>[^:]+?)"\s*:\s+(?P<thick>[\d\-/]+)"?\s*$'
+    r'|^\d+\)[ \t]+(?:Sizes?\s+)?(?P<size2>[^:]+?):\s+(?P<thick2>[\d\-/]+)"?\s*$',
     re.IGNORECASE,
 )
 
@@ -171,10 +171,11 @@ _SIZE_THICK_B_RE = re.compile(
 # "D.  INDOOR PIPING INSULATION SCHEDULE"
 # "E.  OUTDOOR, ABOVEGROUND PIPING INSULATION SCHEDULE"
 # "F.  OUTDOOR, UNDERGROUND PIPING INSULATION SCHEDULE"
+# Also handles headers without an explicit location keyword.
 _SCHED_C_HEADER_RE = re.compile(
-    r"^[A-Z]\.\s{1,4}"
-    r"(?P<loc>(?:INDOOR|OUTDOOR(?:[,\s]+\w+)?|EXPOSED))"
-    r"[^:]*PIPING INSULATION SCHEDULE",
+    r"^[A-Z]\.[ \t]+"
+    r"(?P<loc>INDOOR|OUTDOOR(?:[,\s]+\w+)*|UNDERGROUND|EXPOSED)?"
+    r"[^:]*(?:PIPING\s+)?INSULATION\s+SCHEDULE",
     re.IGNORECASE,
 )
 
@@ -201,6 +202,30 @@ _JACKET_THICK_RE = re.compile(
 )
 
 
+# ── Hot/Cold row expander ─────────────────────────────────────────────────────
+
+_HOT_COLD_RE = re.compile(
+    r"\b(?:hot\s*[/&and]+\s*cold|cold\s*[/&and]+\s*hot)\b",
+    re.IGNORECASE,
+)
+
+
+def _expand_hot_cold(row: dict) -> list[dict]:
+    """If service name contains 'hot/cold' or 'hot and cold', return two rows.
+
+    One row normalised to DOMESTIC HOT WATER, one to DOMESTIC COLD WATER.
+    Otherwise return the original row unchanged (as a single-element list).
+    """
+    svc = row.get("Service", "")
+    if not _HOT_COLD_RE.search(svc):
+        return [row]
+    hot = dict(row)
+    cold = dict(row)
+    hot["Service"] = "DOMESTIC HOT WATER"
+    cold["Service"] = "DOMESTIC COLD WATER"
+    return [hot, cold]
+
+
 # ── public API ────────────────────────────────────────────────────────────────
 
 def parse_text_pipe_insulation(
@@ -225,7 +250,12 @@ def parse_text_pipe_insulation(
     rows_b = _parse_format_b(full_text, pdf_file)
     rows_c = _parse_format_c(full_text, pdf_file)
     best = max([rows_a, rows_b, rows_c], key=len)
-    return [normalize_pipe_row(r) for r in best]
+    result: list[dict] = []
+    for r in best:
+        # Expand Hot/Cold BEFORE normalization so the raw service name is visible
+        for expanded in _expand_hot_cold(r):
+            result.append(normalize_pipe_row(expanded))
+    return result
 
 
 def parse_pipe_insulation_text(page_texts, pdf_file: str = "") -> list[dict]:
@@ -282,7 +312,7 @@ def parse_outline_jacket_schedule(
 
         # Numbered item: "3.  Piping, Non-potable water piping and Refrigerant"
         # Instructional items (1, 2) have no lettered sub-bullets → never produce output
-        m = re.match(r"^\d+\.\s{1,4}(.+)", stripped)
+        m = re.match(r"^\d+\.[ \t]+(.+)", stripped)
         if m:
             current_service = m.group(1).rstrip(": \t")
             continue
@@ -459,15 +489,25 @@ def _parse_format_c(text: str, pdf_file: str) -> list[dict]:
         m = _SCHED_C_HEADER_RE.match(stripped)
         if m:
             in_schedule = True
-            loc = m.group("loc").upper()
+            loc_raw = m.group("loc") or ""
+            loc = loc_raw.upper()
             if "UNDERGROUND" in loc:
                 current_location = "Outdoor - Underground"
-            elif "ABOVE" in loc:
+            elif "ABOVE" in loc or ("OUTDOOR" in loc and "ABOVE" in stripped.upper()):
                 current_location = "Outdoor - Aboveground"
             elif "OUTDOOR" in loc:
                 current_location = "Outdoor"
-            else:
+            elif "INDOOR" in loc:
                 current_location = "Indoor"
+            else:
+                # Infer from the full stripped line
+                su = stripped.upper()
+                if "UNDERGROUND" in su:
+                    current_location = "Outdoor - Underground"
+                elif "OUTDOOR" in su or "ABOVEGROUND" in su:
+                    current_location = "Outdoor"
+                else:
+                    current_location = "Indoor"
             current_service = ""
             pending_service = False
             continue
@@ -485,7 +525,7 @@ def _parse_format_c(text: str, pdf_file: str) -> list[dict]:
             pending_service = False
 
         # Numbered service line: "1.  Non-Potable Water, Chilled Water...:"
-        m = re.match(r"^\d+\.\s{1,4}(.+)", stripped)
+        m = re.match(r"^\d+\.[ \t]+(.+)", stripped)
         if m:
             svc_text = m.group(1).rstrip(": \t")
             current_service = svc_text
