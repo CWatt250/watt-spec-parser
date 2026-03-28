@@ -4,6 +4,8 @@ import os
 
 from spec_parser.extract.pdf_text import extract_pages
 from spec_parser.extract.table_extract import extract_schedule_tables
+from spec_parser.extract.md_extract import extract_markdown
+from spec_parser.extract.md_table_parser import parse_markdown_tables
 from spec_parser.normalize.text_norm import normalize_text
 from spec_parser.detect.csi_sections import detect_source_sections
 from spec_parser.detect.section_classifier import classify_sections
@@ -119,10 +121,16 @@ def run_phase1(pdf_path: str, out_dir: str) -> dict[str, str]:
 def run_single(pdf_path: str, out_dir: str) -> dict:
     """Full pipeline for one PDF: sections + insulation schedules + jacket rules.
 
+    Extraction order:
+    1. pymupdf4llm markdown → parse outline schedules + markdown tables
+    2. pdfplumber table fallback if markdown tables yield 0 pipe rows
+    3. text_fallback_parser if still 0 pipe rows
+
     Returns a dict with all source-section and parsed rows, plus file paths.
     """
     project_file = os.path.basename(pdf_path)
 
+    # ── fitz text extraction (for section detection + text fallback) ──────────
     pages_raw = extract_pages(pdf_path)
     warnings = _compute_warnings(pages_raw)
 
@@ -134,13 +142,55 @@ def run_single(pdf_path: str, out_dir: str) -> dict:
     sections = detect_source_sections(project_file=project_file, pages=pages_norm)
     sections = classify_sections(sections)
 
-    # Extract insulation schedule tables via pdfplumber
-    tables = extract_schedule_tables(pdf_path)
-    pipe_rows = parse_pipe_insulation(tables, pdf_file=project_file)
-    duct_rows = parse_duct_insulation(tables, pdf_file=project_file)
+    # ── Step 1: pymupdf4llm markdown extraction ───────────────────────────────
+    md_text = ""
+    try:
+        md_text = extract_markdown(pdf_path)
+    except Exception:
+        pass
 
-    # Extract jacket rules via fitz prose scan
+    # ── Step 2a: pipe rows from markdown tables ───────────────────────────────
+    pipe_rows: list[dict] = []
+    duct_rows: list[dict] = []
+
+    if md_text:
+        md_tables = parse_markdown_tables(md_text)
+        if md_tables:
+            pipe_rows = parse_pipe_insulation(md_tables, pdf_file=project_file)
+            duct_rows = parse_duct_insulation(md_tables, pdf_file=project_file)
+
+    # ── Step 2b: outline-style text schedules (CSI format) ───────────────────
+    page_texts = [p.text for p in pages_norm]
+    try:
+        from spec_parser.parse.text_fallback_parser import parse_pipe_insulation_text
+        outline_pipe = parse_pipe_insulation_text(page_texts, pdf_file=project_file)
+    except Exception:
+        outline_pipe = []
+
+    # Use outline rows if they beat markdown table rows
+    if len(outline_pipe) > len(pipe_rows):
+        pipe_rows = outline_pipe
+
+    # ── Step 3: pdfplumber fallback if still 0 pipe rows ─────────────────────
+    if not pipe_rows:
+        tables = extract_schedule_tables(pdf_path)
+        pipe_rows = parse_pipe_insulation(tables, pdf_file=project_file)
+        if not duct_rows:
+            duct_rows = parse_duct_insulation(tables, pdf_file=project_file)
+
+    # ── Step 4: duct rows from pdfplumber if not yet found ───────────────────
+    if not duct_rows:
+        tables = extract_schedule_tables(pdf_path)
+        duct_rows = parse_duct_insulation(tables, pdf_file=project_file)
+
+    # ── Step 5: jacket rules — prose scan + outline schedule, merged ─────────
     jacket_rows = parse_jacket_rules_from_pdf(pdf_path, pdf_file=project_file)
+    try:
+        from spec_parser.parse.text_fallback_parser import parse_outline_jacket_schedule
+        outline_jacket = parse_outline_jacket_schedule(page_texts, pdf_file=project_file)
+        jacket_rows = jacket_rows + outline_jacket
+    except Exception:
+        pass
 
     return {
         "project_file": project_file,
