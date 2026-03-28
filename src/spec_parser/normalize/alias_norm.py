@@ -24,7 +24,7 @@ from spec_parser.config.material_dictionary import MATERIAL_ALIAS_MAP
 
 # ── thresholds ────────────────────────────────────────────────────────────────
 
-FUZZY_MIN_SCORE = 80  # 0-100; below this, return None (no confident match)
+FUZZY_MIN_SCORE = 85  # 0-100; below this, return None (no confident match)
 FUZZY_LIMIT = 1       # top-N candidates to consider
 
 

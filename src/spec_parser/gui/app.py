@@ -107,12 +107,19 @@ def _run_parse(pdf_path: str, out_dir: str, scope: str, q: queue.Queue) -> None:
                     duct_rows_md = parse_duct_insulation(md_tables, pdf_file=project_file)
                     post("log", f"  → {len(pipe_rows)} pipe rows (markdown tables)")
 
-            # Step 2b: CSI outline text schedules
+            # Step 2b: CSI outline text schedules (plain text + markdown)
             try:
                 from spec_parser.parse.text_fallback_parser import parse_pipe_insulation_text
                 outline_pipe = parse_pipe_insulation_text(page_texts, pdf_file=project_file)
+                # Also run on markdown text — pymupdf4llm uses **D.** **1.** **a.** bold
+                # markers that _clean() now strips, so markdown may yield more rows
+                if md_text:
+                    md_outline_pipe = parse_pipe_insulation_text([md_text], pdf_file=project_file)
+                    if len(md_outline_pipe) > len(outline_pipe):
+                        post("log", f"  [outline] markdown yielded {len(md_outline_pipe)} rows vs plain {len(outline_pipe)}")
+                        outline_pipe = md_outline_pipe
                 if len(outline_pipe) > len(pipe_rows):
-                    post("log", f"  → {len(outline_pipe)} pipe rows (outline text, beats markdown)")
+                    post("log", f"  → {len(outline_pipe)} pipe rows (outline text, beats markdown tables)")
                     pipe_rows = outline_pipe
             except Exception as e:
                 post("log", f"  [warn] Outline pipe parse failed: {e}")

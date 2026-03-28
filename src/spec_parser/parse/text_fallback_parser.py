@@ -54,6 +54,11 @@ def _clean(text: str) -> str:
     for ch, rep in _FRAC_MAP.items():
         text = text.replace(ch, rep)
     text = text.replace(_SOFT_HYPHEN, "-")
+    # Strip markdown bold/italic markers (**text** → text, *text* → text)
+    # pymupdf4llm emits **D.** **1.** **a.** bold markers in outline schedules
+    text = re.sub(r"\*+", "", text)
+    # Strip markdown heading prefixes (## 3.13 TITLE → 3.13 TITLE)
+    text = re.sub(r"^#+\s*", "", text)
     # Normalize curly/typographic quotes to ASCII before NFKD
     text = text.replace("\u2018", "'").replace("\u2019", "'")  # '' single
     text = text.replace("\u201c", '"').replace("\u201d", '"')  # "" double (inch mark)
