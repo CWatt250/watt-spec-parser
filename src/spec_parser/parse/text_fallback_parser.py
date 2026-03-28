@@ -178,6 +178,22 @@ _SCHED_C_HEADER_RE = re.compile(
     re.IGNORECASE,
 )
 
+# Bare section-level "PIPING INSULATION SCHEDULE" trigger (PHX83/direct format).
+# Excludes "GENERAL" suffix so PHX73's outer "PIPING INSULATION SCHEDULE, GENERAL"
+# header doesn't prematurely enter schedule mode.
+_BARE_PIPING_SCHED_RE = re.compile(
+    r"PIPING\s+INSULATION\s+SCHEDULE(?!\s*,?\s*GENERAL\b)",
+    re.IGNORECASE,
+)
+
+# Numbered material/thickness for PHX83 format:
+# "1.  Cellular Glass:  1-1/2 inches thick."
+_THICK_NUM_RE = re.compile(
+    r"^\d+\.\s{1,4}(?P<type>.+?)[;:]\s+"
+    r"(?P<thick>[\d\-/½¾¼⅜⅝⅞]+)\s+inch(?:es?)?\s+thick",
+    re.IGNORECASE,
+)
+
 # End of section: "3.14" alone or "3.14  TITLE"
 _NEXT_SECTION_C_RE = re.compile(
     r"^\s*\d+\.\d+(?:\s+[A-Z]|\s*$)",
@@ -185,7 +201,7 @@ _NEXT_SECTION_C_RE = re.compile(
 
 # ── jacket outline schedule patterns ──────────────────────────────────────────
 
-_JACKET_SCHED_HDR_RE = re.compile(r"FIELD[-\s]APPLIED JACKET SCHEDULE\b", re.IGNORECASE)
+_JACKET_SCHED_HDR_RE = re.compile(r"(?:FIELD[-\s]APPLIED\s+)?JACKET\s+SCHEDULE\b", re.IGNORECASE)
 
 # "A.  Indoor, Field-Applied Jacket Schedule"
 _JACKET_LOC_RE = re.compile(
@@ -423,26 +439,57 @@ def _parse_format_b(text: str, pdf_file: str) -> list[dict]:
     return rows
 
 
+# ── format-C helpers ──────────────────────────────────────────────────────────
+
+def _loc_from_text(text: str) -> str:
+    """Extract Indoor/Outdoor location label from a header line."""
+    t = text.upper()
+    if "UNDERGROUND" in t:
+        return "Outdoor - Underground"
+    if "ABOVEGROUND" in t or "ABOVE" in t:
+        return "Outdoor - Aboveground"
+    if "OUTDOOR" in t:
+        return "Outdoor"
+    return "Indoor"
+
+
+def _split_services(service_text: str) -> list[str]:
+    """Split a comma-separated service string into individual service names."""
+    parts = [s.strip().rstrip(":") for s in service_text.split(",")]
+    return [p for p in parts if p]
+
+
 # ── format-C parser ───────────────────────────────────────────────────────────
 
 def _parse_format_c(text: str, pdf_file: str) -> list[dict]:
-    """Parse Format C: PHX73 / MasterSpec HVAC outline-style schedules.
+    """Parse Format C: PHX73 / PHX83 / MasterSpec HVAC outline-style schedules.
 
-    D.  INDOOR PIPING INSULATION SCHEDULE
-        1.  Non-Potable Water, Chilled Water...:
-            a.  Cellular Glass:  1-1/2 inches thick.
-    E.  OUTDOOR, ABOVEGROUND PIPING INSULATION SCHEDULE
-        1.  Non-Potable Water...:
-            a.  Cellular Glass:  2 inches thick.
+    PHX73 variant (lettered sub-schedule headers → numbered services → lettered materials):
+        D.  INDOOR PIPING INSULATION SCHEDULE
+            1.  Non-Potable Water, Chilled Water...:
+                a.  Cellular Glass:  1-1/2 inches thick.
+        E.  OUTDOOR, ABOVEGROUND PIPING INSULATION SCHEDULE
+            1.  Non-Potable Water...:
+                a.  Cellular Glass:  2 inches thick.
 
-    Location (Indoor / Outdoor - Aboveground / Outdoor - Underground) is
-    stored in the Notes field of each row.
+    PHX83 variant (bare section header → lettered services → numbered materials):
+        3.13  INDOOR PIPING INSULATION SCHEDULE
+        A.  Non-Potable Water, Chilled Water, Condenser Water:
+            1.  Cellular Glass:  1-1/2 inches thick.
+        B.  Refrigerant Piping:
+            1.  Flexible Elastomeric:  1 inches thick.
+
+    Variant is detected dynamically from the first bullet after entering schedule mode.
+    Location is stored in Notes field of each row.
     """
     rows: list[dict] = []
     in_schedule = False
+    # variant: None (undetermined), 'phx73' (num-service / letter-material),
+    #          or 'phx83' (letter-service / num-material)
+    variant = None
     current_location = ""
     current_service = ""
-    pending_service = False  # True when numbered service line wrapped to next line
+    pending_service = False
 
     for stripped in _join_bullet_lines(text.splitlines()):
         if not stripped:
@@ -451,23 +498,29 @@ def _parse_format_c(text: str, pdf_file: str) -> list[dict]:
         # End on a new CSI section number ("3.14" alone or "3.15  TITLE")
         if in_schedule and _NEXT_SECTION_C_RE.match(stripped):
             in_schedule = False
+            variant = None
             current_location = current_service = ""
             pending_service = False
             continue
 
-        # Lettered schedule header with location context
+        # PHX73 variant trigger: "D.  INDOOR PIPING INSULATION SCHEDULE"
+        # Also handles sub-schedule location changes within an already-open schedule.
         m = _SCHED_C_HEADER_RE.match(stripped)
         if m:
             in_schedule = True
-            loc = m.group("loc").upper()
-            if "UNDERGROUND" in loc:
-                current_location = "Outdoor - Underground"
-            elif "ABOVE" in loc:
-                current_location = "Outdoor - Aboveground"
-            elif "OUTDOOR" in loc:
-                current_location = "Outdoor"
-            else:
-                current_location = "Indoor"
+            variant = "phx73"
+            current_location = _loc_from_text(m.group("loc"))
+            current_service = ""
+            pending_service = False
+            continue
+
+        # PHX83/bare variant trigger: any line containing "PIPING INSULATION SCHEDULE"
+        # that wasn't already caught by _SCHED_C_HEADER_RE above.
+        # Excludes "GENERAL" suffix to avoid matching PHX73's outer section header.
+        if not in_schedule and _BARE_PIPING_SCHED_RE.search(stripped):
+            in_schedule = True
+            variant = None  # determined by the first bullet seen below
+            current_location = _loc_from_text(stripped)
             current_service = ""
             pending_service = False
             continue
@@ -475,7 +528,51 @@ def _parse_format_c(text: str, pdf_file: str) -> list[dict]:
         if not in_schedule:
             continue
 
-        # Service continuation: fitz often wraps long service names across lines
+        # Resolve variant from first bullet if not yet determined
+        if variant is None:
+            if re.match(r"^[A-Z]\.\s", stripped):
+                variant = "phx83"
+            elif re.match(r"^\d+\.\s", stripped):
+                variant = "phx73"
+
+        # ── PHX83 branch: A./B./C. = service, 1./2. = material+thickness ──────
+        if variant == "phx83":
+            # Service continuation (line-wrapped service names)
+            if pending_service:
+                if not re.match(r"^[a-zA-Z]\.\s", stripped) and not re.match(r"^\d+\.\s", stripped):
+                    current_service = (current_service + " " + stripped).rstrip(": \t")
+                    if stripped.rstrip().endswith(":"):
+                        pending_service = False
+                    continue
+                pending_service = False
+
+            # Uppercase-letter service line: "A.  Non-Potable Water, Chilled Water:"
+            m = re.match(r"^[A-Z]\.\s{1,4}(.+)", stripped)
+            if m:
+                svc_text = m.group(1).rstrip(": \t")
+                current_service = svc_text
+                pending_service = not stripped.rstrip().endswith(":")
+                continue
+
+            # Numbered material/thickness: "1.  Cellular Glass:  1-1/2 inches thick."
+            m = _THICK_NUM_RE.match(stripped)
+            if m and current_service:
+                ins_type = m.group("type").strip()
+                thickness = _norm_thickness(m.group("thick"))
+                for svc in _split_services(current_service):
+                    rows.append({
+                        "Service": svc,
+                        "Pipe_Size_Range": "All Sizes",
+                        "Thickness": thickness,
+                        "Insulation_Type": ins_type,
+                        "Jacket_Required": "",
+                        "Notes": current_location,
+                        "PDF_File": pdf_file,
+                    })
+            continue
+
+        # ── PHX73 branch: 1. = service, a. = material+thickness ───────────────
+        # Service continuation
         if pending_service:
             if not re.match(r"^[a-zA-Z]\.\s", stripped) and not re.match(r"^\d+\.\s", stripped):
                 current_service = (current_service + " " + stripped).rstrip(": \t")
@@ -489,21 +586,23 @@ def _parse_format_c(text: str, pdf_file: str) -> list[dict]:
         if m:
             svc_text = m.group(1).rstrip(": \t")
             current_service = svc_text
-            # Mark pending if line didn't end with colon (name may wrap)
             pending_service = not stripped.rstrip().endswith(":")
             continue
 
         # Lettered material/thickness: "a.  Cellular Glass:  1-1/2 inches thick."
         m = _THICK_A_RE.match(stripped)
         if m and current_service:
-            rows.append({
-                "Service": current_service,
-                "Pipe_Size_Range": "All",
-                "Thickness": _norm_thickness(m.group("thick")),
-                "Insulation_Type": m.group("type").strip(),
-                "Jacket_Required": "",
-                "Notes": current_location,
-                "PDF_File": pdf_file,
-            })
+            ins_type = m.group("type").strip()
+            thickness = _norm_thickness(m.group("thick"))
+            for svc in _split_services(current_service):
+                rows.append({
+                    "Service": svc,
+                    "Pipe_Size_Range": "All Sizes",
+                    "Thickness": thickness,
+                    "Insulation_Type": ins_type,
+                    "Jacket_Required": "",
+                    "Notes": current_location,
+                    "PDF_File": pdf_file,
+                })
 
     return rows
